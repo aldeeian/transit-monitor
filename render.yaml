@@ -1,0 +1,19 @@
+# Render blueprint: deploys the Go service (poller + API + notifier) as a
+# free web service from the Dockerfile. Postgres lives on Supabase (Render's
+# free Postgres expires after 30 days). Free instances spin down after 15
+# idle minutes — the UptimeRobot health ping keeps it awake.
+services:
+  - type: web
+    name: transit-monitor
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Supabase connection string (set in dashboard)
+      - key: RESEND_API_KEY
+        sync: false
+      - key: PUBLIC_URL
+        sync: false # https://<this-service>.onrender.com
+      - key: DASHBOARD_URL
+        sync: false # https://<dashboard>.vercel.app

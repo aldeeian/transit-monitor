@@ -63,6 +63,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	subject, body := notify.ConfirmationEmail(s.publicURL, sub)
 	if err := s.sender.Send(r.Context(), sub.Email, subject, body); err != nil {
+		// Resend sandbox (no verified domain yet) 403s any recipient other
+		// than the account owner — surface that honestly instead of a 500.
+		if strings.Contains(err.Error(), "403") {
+			log.Printf("subscribe: sandbox restriction for %s", sub.Email)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "email alerts are in a limited beta and not open to new addresses yet — check back soon",
+			})
+			return
+		}
 		serverError(w, "send confirmation", err)
 		return
 	}
