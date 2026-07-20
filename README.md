@@ -3,7 +3,30 @@
 Real-time delay & disruption monitor for Calgary Transit, built on the City of
 Calgary's public GTFS-Realtime feeds (refreshed every 30s, no API key).
 
-## Status: Phase 4 — dashboard + email alerts (done)
+**Live:** dashboard https://transit-monitor.vercel.app · API https://transit-monitor.onrender.com/api/health
+
+## Status: Phase 6 — deployed to production (done)
+
+Free-tier stack, all deploy-from-git:
+
+| Piece | Where | Notes |
+|---|---|---|
+| Go service (poller + API + notifier) | Render (Docker, free web service) | spins down after 15 idle min; UptimeRobot ping keeps it warm |
+| Postgres | Supabase (free) | connect via **session pooler** on :5432 (IPv4; Render free has no IPv6) |
+| Dashboard | Vercel (free) | `NEXT_PUBLIC_API_URL` → Render API, baked at build |
+| Email | Resend (free: 3k/mo, 100/day) | needs a verified domain to email anyone but the account owner |
+
+Deploy config: `render.yaml` blueprint + `Dockerfile` (distroless static).
+Render env vars: `DATABASE_URL` (Supabase pooler), `RESEND_API_KEY`,
+`PUBLIC_URL` (the Render URL, for email verify/unsubscribe links),
+`DASHBOARD_URL` (the Vercel URL, for "view status" links). The service reads
+`PORT` automatically.
+
+**Known free-tier tradeoff:** if the UptimeRobot ping ever lapses, the Render
+instance sleeps and the poller stops until the next request wakes it (~1 min
+cold start). Fine for a portfolio deployment; a paid instance removes it.
+
+## Phase 4 — dashboard + email alerts (done)
 
 ### Dashboard (`dashboard/`, Next.js + TypeScript)
 
