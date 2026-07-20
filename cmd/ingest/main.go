@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"transit-monitor/internal/gtfsrt"
+	"transit-monitor/internal/store"
 )
 
 func main() {
 	alertsURL := flag.String("alerts-url", gtfsrt.DefaultAlertsURL, "GTFS-RT service alerts feed URL")
 	interval := flag.Duration("interval", 30*time.Second, "poll interval")
 	once := flag.Bool("once", false, "poll a single time and exit")
+	dsn := flag.String("db", os.Getenv("DATABASE_URL"), "Postgres DSN (empty = stdout-only, no persistence)")
 	flag.Parse()
 
 	log.SetFlags(log.Ltime)
@@ -25,7 +27,22 @@ func main() {
 	defer stop()
 
 	fetcher := gtfsrt.NewFetcher(*alertsURL)
-	prev := map[string]string(nil) // nil = first poll, print full snapshot
+	prev := map[string]string(nil) // nil = first poll in stdout-only mode: print full snapshot
+
+	var st *store.Store
+	if *dsn != "" {
+		var err error
+		st, err = store.Open(ctx, *dsn)
+		if err != nil {
+			log.Fatalf("FATAL db: %v", err)
+		}
+		defer st.Close()
+		prev, err = st.ActiveFingerprints(ctx)
+		if err != nil {
+			log.Fatalf("FATAL load fingerprints: %v", err)
+		}
+		log.Printf("db connected: %d known active alerts", len(prev))
+	}
 
 	poll := func() {
 		fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -44,19 +61,31 @@ func main() {
 			for _, ev := range events {
 				printEvent("ACTIVE", ev)
 			}
-		} else {
-			d := gtfsrt.Diff(prev, events)
-			if len(d.New)+len(d.Changed)+len(d.Resolved) == 0 {
-				log.Printf("no changes: %d active alerts (feed timestamp %s)", len(events), ts.Format(time.Kitchen))
-			}
-			for _, ev := range d.New {
-				printEvent("NEW", ev)
-			}
-			for _, ev := range d.Changed {
-				printEvent("UPDATED", ev)
-			}
-			for _, id := range d.Resolved {
-				log.Printf("[RESOLVED] alert %s no longer in feed", id)
+			prev = gtfsrt.FingerprintMap(events)
+			return
+		}
+
+		d := gtfsrt.Diff(prev, events)
+		if len(d.New)+len(d.Changed)+len(d.Resolved) == 0 {
+			log.Printf("no changes: %d active alerts (feed timestamp %s)", len(events), ts.Format(time.Kitchen))
+		}
+		for _, ev := range d.New {
+			printEvent("NEW", ev)
+		}
+		for _, ev := range d.Changed {
+			printEvent("UPDATED", ev)
+		}
+		for _, id := range d.Resolved {
+			log.Printf("[RESOLVED] alert %s no longer in feed", id)
+		}
+
+		if st != nil {
+			// Only advance prev after a successful commit, so a failed
+			// write is retried (same diff) on the next tick instead of
+			// silently dropping events.
+			if err := st.ApplyPoll(fctx, d, events); err != nil {
+				log.Printf("ERROR db write failed (will retry next tick): %v", err)
+				return
 			}
 		}
 		prev = gtfsrt.FingerprintMap(events)

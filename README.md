@@ -3,19 +3,37 @@
 Real-time delay & disruption monitor for Calgary Transit, built on the City of
 Calgary's public GTFS-Realtime feeds (refreshed every 30s, no API key).
 
-## Status: Phase 1 — ingestion pipeline (done)
+## Status: Phase 2 — Postgres persistence (done)
 
 A Go service polls the Service Alerts feed, decodes the protobuf, normalizes
-each alert into a structured event, and prints plain-language output to
-stdout. An in-memory diff means repeat polls only report new/updated/resolved
-alerts, never duplicates.
+each alert into a structured event, and diffs it against durable state in
+Postgres — so only genuinely new/updated/resolved alerts produce events, and
+restarts never re-alert on known alerts.
 
 ```
-go run ./cmd/ingest          # poll every 30s until ctrl-c
-go run ./cmd/ingest -once    # single poll, print snapshot, exit
+go run ./cmd/devdb           # local Postgres on :5433, zero install (data in .devdb/)
+go run ./cmd/ingest -db "postgres://postgres:postgres@127.0.0.1:5433/transit?sslmode=disable"
+go run ./cmd/ingest          # stdout-only mode, no DB (Phase 1 behavior)
+go run ./cmd/ingest -once    # single poll, then exit
+go run ./cmd/dbstats         # row counts sanity check
 go run ./cmd/dumpalert -n 2  # debug: dump raw feed entities as prototext
-go test ./...
+go test ./...                # includes integration tests vs real embedded Postgres
+go test ./... -short         # unit tests only, skips embedded Postgres
 ```
+
+`-db` also reads `DATABASE_URL`. Empty = stdout-only.
+
+### Persistence design
+
+- `alerts` — current state per alert ID, upserted; `resolved_at` set when an
+  alert leaves the feed, cleared if it reappears.
+- `alert_events` — append-only history (`new` / `updated` / `resolved`), one
+  row per real state transition; powers per-route disruption history later.
+- Idempotency comes from diffing against fingerprints loaded from the DB, not
+  memory; the poller only advances its diff state after a successful commit,
+  so a failed write retries next tick instead of dropping events.
+- Nil routes/stops from sparse alerts are coalesced to empty arrays (the live
+  feed really does send route-less alerts).
 
 ## Feed URLs (verified live 2026-07-19)
 
@@ -39,7 +57,7 @@ go test ./...
 ## Roadmap
 
 1. ~~Phase 1: poll + parse + normalized stdout events~~
-2. Phase 2: Postgres persistence + durable diffing (only store/alert on new events)
+2. ~~Phase 2: Postgres persistence + durable diffing~~
 3. Phase 3: REST API — current disruptions + history
 4. Phase 4: Next.js dashboard
 5. Phase 5: email subscriptions
