@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 	"net/mail"
 	"strings"
