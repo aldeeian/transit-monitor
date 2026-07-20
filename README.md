@@ -3,70 +3,64 @@
 Real-time delay & disruption monitor for Calgary Transit, built on the City of
 Calgary's public GTFS-Realtime feeds (refreshed every 30s, no API key).
 
-**Live:** dashboard https://transit-monitor.vercel.app · API https://transit-monitor.onrender.com/api/health
+Instead of the noisy raw protobuf feed, it turns service alerts into
+plain-language disruptions you can read, filter by route, and subscribe to by
+email — plus a per-route history so you can see which lines are disrupted most.
 
-## Status: Phase 6 — deployed to production (done)
+**Live demo:** dashboard https://transit-monitor.vercel.app · API https://transit-monitor.onrender.com/api/health
 
-Free-tier stack, all deploy-from-git:
+## Architecture
 
-| Piece | Where | Notes |
+A single Go binary runs three things off one 30-second poll loop: it fetches
+and decodes the GTFS-RT service-alerts feed, persists normalized disruption
+events to Postgres, serves a read-only JSON API, and emails subscribers when a
+new disruption hits one of their routes. A Next.js dashboard reads the API.
+
+| Component | Stack | Hosting |
 |---|---|---|
-| Go service (poller + API + notifier) | Render (Docker, free web service) | spins down after 15 idle min; UptimeRobot ping keeps it warm |
-| Postgres | Supabase (free) | connect via **session pooler** on :5432 (IPv4; Render free has no IPv6) |
-| Dashboard | Vercel (free) | `NEXT_PUBLIC_API_URL` → Render API, baked at build |
-| Email | Resend (free: 3k/mo, 100/day) | needs a verified domain to email anyone but the account owner |
+| Poller + API + notifier | Go (one binary) | Render (Docker) |
+| Database | Postgres | Supabase |
+| Dashboard | Next.js + TypeScript | Vercel |
+| Email | Resend HTTP API | — |
 
-Deploy config: `render.yaml` blueprint + `Dockerfile` (distroless static).
-Render env vars: `DATABASE_URL` (Supabase pooler), `RESEND_API_KEY`,
-`PUBLIC_URL` (the Render URL, for email verify/unsubscribe links),
-`DASHBOARD_URL` (the Vercel URL, for "view status" links). The service reads
-`PORT` automatically.
-
-**Known free-tier tradeoff:** if the UptimeRobot ping ever lapses, the Render
-instance sleeps and the poller stops until the next request wakes it (~1 min
-cold start). Fine for a portfolio deployment; a paid instance removes it.
-
-## Phase 4 — dashboard + email alerts (done)
-
-### Dashboard (`dashboard/`, Next.js + TypeScript)
+## Running locally
 
 ```
-cd dashboard && npm install && npm run build && npm run start   # http://localhost:3000
-# NEXT_PUBLIC_API_URL overrides the API base (default http://127.0.0.1:8080)
+go run ./cmd/devdb           # local Postgres on :5433, zero install (data in .devdb/)
+go run ./cmd/ingest -db "postgres://postgres:postgres@127.0.0.1:5433/transit?sslmode=disable"
+go run ./cmd/ingest          # stdout-only mode, no DB
+go run ./cmd/ingest -once    # single poll, then exit
+go run ./cmd/dbstats         # row counts sanity check
+go run ./cmd/dumpalert -n 2  # debug: dump raw feed entities as prototext
+go test ./...                # includes integration tests vs a real embedded Postgres
+go test ./... -short         # unit tests only, skips embedded Postgres
 ```
 
-Ops-tool aesthetic on purpose: dense left-aligned tables, monospace, muted
-GitHub-dark palette, status colors that carry meaning (red = no service,
-amber = delays/detours, gray = informational; always paired with text).
-Views: active disruptions (filter by text/route chips, sort, click row for
-full detail), per-route page (current + daily new-disruption bar chart +
-event log), and an always-visible health strip: LIVE / STALE / OFFLINE with
-last-poll age — the site is honest about its own data freshness.
+`-db` also reads `DATABASE_URL`; empty means stdout-only. Run the dashboard
+with `cd dashboard && npm install && npm run dev` (set `NEXT_PUBLIC_API_URL`
+to point at the API; default `http://127.0.0.1:8080`).
 
-### Email alerts
+## Data pipeline
 
-- Subscribe on the dashboard (email + routes) → **double opt-in**: a
-  confirmation email with a verify link; zero alerts until clicked.
-  Re-subscribing (even to change routes) rotates the token and requires
-  re-confirmation.
-- The notifier runs on the ingestion poll cadence (no second poller): new
-  `alert_events` rows are matched to verified subscriptions by route
-  overlap and claimed + sent in a single transaction
-  (`notifications_sent` log) — a restart mid-batch cannot duplicate, a
-  failed send retries next pass.
-- New subscribers don't get the existing backlog (events predating
-  verification are excluded).
-- Every alert has a **one-click unsubscribe** link (no login).
-- Sender: Resend when `RESEND_API_KEY` is set (free tier: 3k/month,
-  100/day; unverified domains can only send to your own account email);
-  otherwise dev mode writes .html files to `-outbox` (default `.outbox/`).
-- `go run ./cmd/simulate -routes 999` injects a synthetic disruption to
-  test the pipeline end to end.
+A Go service polls the Service Alerts feed, decodes the protobuf, normalizes
+each alert into a structured event, and diffs it against durable state in
+Postgres — so only genuinely new/updated/resolved alerts produce events, and
+restarts never re-alert on known alerts.
 
-## Phase 3 — REST API (done)
+- `alerts` — current state per alert ID, upserted; `resolved_at` is set when an
+  alert leaves the feed and cleared if it reappears.
+- `alert_events` — append-only history (`new` / `updated` / `resolved`), one
+  row per real state transition; powers per-route history.
+- Idempotency comes from diffing against fingerprints loaded from the DB, not
+  memory; the poller only advances its diff state after a successful commit, so
+  a failed write retries next tick instead of dropping events.
+- Nil routes/stops from sparse alerts are coalesced to empty arrays (the live
+  feed really does send route-less alerts).
 
-With `-db` set (and not `-once`), the ingest binary also serves a read-only
-JSON API (default `127.0.0.1:8080`, `-listen` to change, empty to disable):
+## API
+
+With `-db` set (and not `-once`), the binary serves a read-only JSON API
+(default `127.0.0.1:8080`, `-listen` to change):
 
 | Endpoint | Returns |
 |---|---|
@@ -74,44 +68,53 @@ JSON API (default `127.0.0.1:8080`, `-listen` to change, empty to disable):
 | `GET /api/disruptions[?route=N]` | active disruptions, newest first |
 | `GET /api/routes?days=N` | per-route summary: active now + new disruptions in window |
 | `GET /api/routes/{route}/history?days=N` | daily new-disruption counts + event log (`days` clamped 1–90, default 14) |
+| `POST /api/subscribe` | start a double-opt-in email subscription (rate-limited per IP and per email) |
+| `GET /api/verify` · `GET /api/unsubscribe` | confirm / cancel a subscription via emailed token link |
 
-CORS is open for GETs (the Phase 4 dashboard runs on another origin).
-Responses declare `charset=utf-8` — Windows PowerShell 5.1 mis-decodes
-UTF-8 JSON without it.
+## Dashboard
 
-## Phase 2 — Postgres persistence (done)
+Ops-tool aesthetic on purpose: dense left-aligned tables, monospace, muted
+GitHub-dark palette, status colors that carry meaning (red = no service,
+amber = delays/detours, gray = informational; always paired with text).
+Views: active disruptions (filter by text/route chips, sort, click a row for
+full detail), per-route page (current status + daily new-disruption bar chart +
+event log), and an always-visible health strip — LIVE / STALE / OFFLINE with
+last-poll age, so the site is honest about its own data freshness.
 
-A Go service polls the Service Alerts feed, decodes the protobuf, normalizes
-each alert into a structured event, and diffs it against durable state in
-Postgres — so only genuinely new/updated/resolved alerts produce events, and
-restarts never re-alert on known alerts.
+## Email alerts
 
-```
-go run ./cmd/devdb           # local Postgres on :5433, zero install (data in .devdb/)
-go run ./cmd/ingest -db "postgres://postgres:postgres@127.0.0.1:5433/transit?sslmode=disable"
-go run ./cmd/ingest          # stdout-only mode, no DB (Phase 1 behavior)
-go run ./cmd/ingest -once    # single poll, then exit
-go run ./cmd/dbstats         # row counts sanity check
-go run ./cmd/dumpalert -n 2  # debug: dump raw feed entities as prototext
-go test ./...                # includes integration tests vs real embedded Postgres
-go test ./... -short         # unit tests only, skips embedded Postgres
-```
+- Subscribe with an email + routes → **double opt-in**: a confirmation email
+  with a verify link; zero alerts until clicked. Re-subscribing (even to change
+  routes) rotates the token and requires re-confirmation.
+- The notifier runs on the poll cadence (no second poller): new `alert_events`
+  rows are matched to verified subscriptions by route overlap and claimed + sent
+  in a single transaction (`notifications_sent` log) — a restart mid-batch can't
+  duplicate, a failed send retries next pass.
+- New subscribers don't get the existing backlog (events predating verification
+  are excluded). Every alert has a **one-click unsubscribe** link (no login).
+- Sender: Resend when `RESEND_API_KEY` is set (free tier: 3k/month, 100/day;
+  unverified domains can only send to your own account email); otherwise dev
+  mode writes `.html` files to `-outbox` (default `.outbox/`).
+- `go run ./cmd/simulate -routes 999` injects a synthetic disruption to test
+  the pipeline end to end.
 
-`-db` also reads `DATABASE_URL`. Empty = stdout-only.
+## Deployment
 
-### Persistence design
+Deploy config lives in `render.yaml` (blueprint) and `Dockerfile` (distroless
+static build). Environment variables:
 
-- `alerts` — current state per alert ID, upserted; `resolved_at` set when an
-  alert leaves the feed, cleared if it reappears.
-- `alert_events` — append-only history (`new` / `updated` / `resolved`), one
-  row per real state transition; powers per-route disruption history later.
-- Idempotency comes from diffing against fingerprints loaded from the DB, not
-  memory; the poller only advances its diff state after a successful commit,
-  so a failed write retries next tick instead of dropping events.
-- Nil routes/stops from sparse alerts are coalesced to empty arrays (the live
-  feed really does send route-less alerts).
+- `DATABASE_URL` — Postgres connection (use Supabase's **session pooler** on
+  :5432; the free Render tier is IPv4-only and Supabase's direct host is IPv6).
+- `RESEND_API_KEY` — enables real email sending.
+- `PUBLIC_URL` — the API's public base URL, used in email verify/unsubscribe links.
+- `DASHBOARD_URL` — the dashboard base URL, used in "view status" email links.
+- `PORT` — read automatically when the platform provides it.
 
-## Feed URLs (verified live 2026-07-19)
+A free Render web service sleeps after 15 idle minutes; an UptimeRobot ping on
+`/api/health` keeps it warm and doubles as alerting (the endpoint returns 503
+when the poller goes stale). A paid instance removes the cold start.
+
+## Feed URLs
 
 | Feed | Socrata dataset | URL |
 |---|---|---|
@@ -122,19 +125,16 @@ go test ./... -short         # unit tests only, skips embedded Postgres
 ## Calgary feed quirks (learned from live data)
 
 - `header_text` is always present but **empty** — the real content is in
-  `description_text` as raw HTML. We strip it to plain text and synthesize a
-  headline from the first sentence.
+  `description_text` as raw HTML. It's stripped to plain text with a headline
+  synthesized from the first sentence.
 - The proto `effect` field is unset; the true effect is embedded in the
-  description HTML as `<div data-effect="DETOUR"></div>`. We extract it, but
-  an explicitly set proto effect still wins.
-- Feed reports `gtfs_realtime_version: "0.1"` in its header; the payload
+  description HTML as `<div data-effect="DETOUR"></div>`. It's extracted, but an
+  explicitly set proto effect still wins.
+- The feed reports `gtfs_realtime_version: "0.1"` in its header; the payload
   parses fine with standard GTFS-RT v2 bindings.
 
-## Roadmap
+## Possible next steps
 
-1. ~~Phase 1: poll + parse + normalized stdout events~~
-2. ~~Phase 2: Postgres persistence + durable diffing~~
-3. ~~Phase 3: REST API — current disruptions + history~~
-4. Phase 4: Next.js dashboard
-5. Phase 5: email subscriptions
-6. Phase 6: deploy + health monitoring
+- Ingest the Trip Updates feed for live vehicle lateness (not just planned alerts).
+- Resolve numeric route IDs to names using the static GTFS schedule dataset.
+- Web push notifications alongside email.

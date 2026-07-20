@@ -1,5 +1,5 @@
-// Package email abstracts transactional email sending. Production uses
-// Resend's HTTP API; development writes .html files to an outbox directory
+// Package email abstracts transactional email sending. The live sender uses
+// Resend's HTTP API; the dev sender writes .html files to an outbox directory
 // so the full pipeline is verifiable without an API key.
 package email
 

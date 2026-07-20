@@ -48,8 +48,8 @@ func (s *Server) Handler() http.Handler {
 	return withCORS(mux)
 }
 
-// withCORS allows browser dashboards (Phase 4) on other origins to read the
-// API. GET-only, no credentials, so permissive is fine.
+// withCORS allows the browser dashboard on another origin to read the API.
+// GET-only, no credentials, so permissive is fine.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
