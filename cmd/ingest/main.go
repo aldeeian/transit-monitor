@@ -18,14 +18,14 @@ import (
 )
 
 func main() {
-	alertsURL := flag.String("alerts-url", gtfsrt.DefaultAlertsURL, "GTFS-RT service alerts feed URL")
+	alertsURL := flag.String("alerts-url", envOr("ALERTS_URL", gtfsrt.DefaultAlertsURL), "GTFS-RT service alerts feed URL")
 	interval := flag.Duration("interval", 30*time.Second, "poll interval")
 	once := flag.Bool("once", false, "poll a single time and exit")
 	dsn := flag.String("db", os.Getenv("DATABASE_URL"), "Postgres DSN (empty = stdout-only, no persistence)")
-	listen := flag.String("listen", "127.0.0.1:8080", "API listen address (empty = no API; requires -db)")
-	publicURL := flag.String("public-url", "http://127.0.0.1:8080", "externally reachable API base URL for email links")
-	dashURL := flag.String("dashboard-url", "http://127.0.0.1:3000", "dashboard base URL for email links")
-	emailFrom := flag.String("email-from", "Transit Monitor <onboarding@resend.dev>", "From address for outgoing email")
+	listen := flag.String("listen", defaultListen(), "API listen address (empty = no API; requires -db)")
+	publicURL := flag.String("public-url", envOr("PUBLIC_URL", "http://127.0.0.1:8080"), "externally reachable API base URL for email links")
+	dashURL := flag.String("dashboard-url", envOr("DASHBOARD_URL", "http://127.0.0.1:3000"), "dashboard base URL for email links")
+	emailFrom := flag.String("email-from", envOr("EMAIL_FROM", "Transit Monitor <onboarding@resend.dev>"), "From address for outgoing email")
 	outbox := flag.String("outbox", ".outbox", "dir for dev-mode emails (used when RESEND_API_KEY is unset)")
 	flag.Parse()
 
@@ -160,6 +160,26 @@ func main() {
 			poll()
 		}
 	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// defaultListen resolves the API bind address: LISTEN_ADDR wins, then a
+// platform-provided PORT (Railway/Render style, bind all interfaces), then
+// localhost for development.
+func defaultListen() string {
+	if v := os.Getenv("LISTEN_ADDR"); v != "" {
+		return v
+	}
+	if p := os.Getenv("PORT"); p != "" {
+		return "0.0.0.0:" + p
+	}
+	return "127.0.0.1:8080"
 }
 
 func printEvent(tag string, ev gtfsrt.Event) {

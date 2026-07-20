@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
 
 	"transit-monitor/internal/notify"
 	"transit-monitor/internal/store"
@@ -23,6 +24,12 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "subscriptions not enabled"})
 		return
 	}
+	// The endpoint sends email, so it gets abuse limits: per-IP and
+	// per-email. Generous for humans, hostile to scripts.
+	if !s.limiter.allow("ip:"+clientIP(r), 5, time.Hour) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many subscribe attempts, try again later"})
+		return
+	}
 	var req subscribeRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
@@ -31,6 +38,10 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	addr, err := mail.ParseAddress(strings.TrimSpace(req.Email))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email address"})
+		return
+	}
+	if !s.limiter.allow("email:"+strings.ToLower(addr.Address), 3, 24*time.Hour) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many confirmation emails for this address today"})
 		return
 	}
 	var routes []string

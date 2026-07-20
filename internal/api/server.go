@@ -22,10 +22,11 @@ type Server struct {
 	staleAfter time.Duration
 	sender     email.Sender
 	publicURL  string
+	limiter    *rateLimiter
 }
 
 func NewServer(st *store.Store, h *Health, staleAfter time.Duration) *Server {
-	return &Server{store: st, health: h, staleAfter: staleAfter}
+	return &Server{store: st, health: h, staleAfter: staleAfter, limiter: newRateLimiter()}
 }
 
 // EnableSubscriptions turns on the subscribe/verify/unsubscribe endpoints.
@@ -139,6 +140,19 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
+	go func() {
+		// Keep the rate-limit map bounded under scanner traffic.
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.limiter.prune(24 * time.Hour)
+			}
+		}
+	}()
 	log.Printf("api listening on http://%s", addr)
 
 	select {

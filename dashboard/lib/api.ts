@@ -31,6 +31,7 @@ export type HealthView = {
   consecutive_failures: number;
 };
 
+// day is a YYYY-MM-DD string in America/Edmonton (Calgary calendar days).
 export type DayCount = { day: string; count: number };
 
 export type HistoryEvent = {

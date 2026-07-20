@@ -68,6 +68,10 @@ export default function SubscribeForm() {
         within ~1 minute of Calgary Transit publishing a new disruption on your
         routes.
       </p>
+      <p className="hint">
+        Privacy: your email is stored only to send these alerts, never shared,
+        and deleted immediately when you unsubscribe.
+      </p>
     </div>
   );
 }

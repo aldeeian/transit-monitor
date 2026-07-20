@@ -21,16 +21,18 @@ export default function BarChart({
   );
 
   const series = useMemo(() => {
-    const byDay = new Map(
-      daily.map((d) => [new Date(d.day).toDateString(), d.count]),
-    );
+    // API days are YYYY-MM-DD strings in America/Edmonton; build the axis
+    // with the same string keys so no Date-parsing timezone shift creeps in.
+    const key = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const byDay = new Map(daily.map((d) => [d.day, d.count]));
     const out: { label: string; count: number }[] = [];
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       out.push({
         label: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-        count: byDay.get(d.toDateString()) ?? 0,
+        count: byDay.get(key(d)) ?? 0,
       });
     }
     return out;

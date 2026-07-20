@@ -104,10 +104,12 @@ func (s *Store) RoutesSummary(ctx context.Context, days int) ([]RouteSummary, er
 	return out, rows.Err()
 }
 
-// DayCount is one day's new-disruption count for a route.
+// DayCount is one day's new-disruption count for a route. Day is a plain
+// YYYY-MM-DD string in America/Edmonton — a calendar day for Calgary
+// riders regardless of where the server runs.
 type DayCount struct {
-	Day   time.Time `json:"day"`
-	Count int       `json:"count"`
+	Day   string `json:"day"`
+	Count int    `json:"count"`
 }
 
 // HistoryEvent is one state transition affecting a route.
@@ -124,7 +126,7 @@ type HistoryEvent struct {
 func (s *Store) RouteHistory(ctx context.Context, route string, days int) ([]DayCount, []HistoryEvent, error) {
 	daily := []DayCount{}
 	rows, err := s.pool.Query(ctx, `
-		SELECT date_trunc('day', e.occurred_at) AS day, count(*)
+		SELECT to_char(e.occurred_at AT TIME ZONE 'America/Edmonton', 'YYYY-MM-DD') AS day, count(*)
 		FROM alert_events e
 		JOIN alerts a ON a.id = e.alert_id
 		WHERE e.kind = 'new'

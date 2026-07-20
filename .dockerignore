@@ -1,0 +1,6 @@
+.devdb/
+.outbox/
+.env
+.git/
+dashboard/
+README.md
