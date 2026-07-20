@@ -3,7 +3,44 @@
 Real-time delay & disruption monitor for Calgary Transit, built on the City of
 Calgary's public GTFS-Realtime feeds (refreshed every 30s, no API key).
 
-## Status: Phase 3 — REST API (done)
+## Status: Phase 4 — dashboard + email alerts (done)
+
+### Dashboard (`dashboard/`, Next.js + TypeScript)
+
+```
+cd dashboard && npm install && npm run build && npm run start   # http://localhost:3000
+# NEXT_PUBLIC_API_URL overrides the API base (default http://127.0.0.1:8080)
+```
+
+Ops-tool aesthetic on purpose: dense left-aligned tables, monospace, muted
+GitHub-dark palette, status colors that carry meaning (red = no service,
+amber = delays/detours, gray = informational; always paired with text).
+Views: active disruptions (filter by text/route chips, sort, click row for
+full detail), per-route page (current + daily new-disruption bar chart +
+event log), and an always-visible health strip: LIVE / STALE / OFFLINE with
+last-poll age — the site is honest about its own data freshness.
+
+### Email alerts
+
+- Subscribe on the dashboard (email + routes) → **double opt-in**: a
+  confirmation email with a verify link; zero alerts until clicked.
+  Re-subscribing (even to change routes) rotates the token and requires
+  re-confirmation.
+- The notifier runs on the ingestion poll cadence (no second poller): new
+  `alert_events` rows are matched to verified subscriptions by route
+  overlap and claimed + sent in a single transaction
+  (`notifications_sent` log) — a restart mid-batch cannot duplicate, a
+  failed send retries next pass.
+- New subscribers don't get the existing backlog (events predating
+  verification are excluded).
+- Every alert has a **one-click unsubscribe** link (no login).
+- Sender: Resend when `RESEND_API_KEY` is set (free tier: 3k/month,
+  100/day; unverified domains can only send to your own account email);
+  otherwise dev mode writes .html files to `-outbox` (default `.outbox/`).
+- `go run ./cmd/simulate -routes 999` injects a synthetic disruption to
+  test the pipeline end to end.
+
+## Phase 3 — REST API (done)
 
 With `-db` set (and not `-once`), the ingest binary also serves a read-only
 JSON API (default `127.0.0.1:8080`, `-listen` to change, empty to disable):

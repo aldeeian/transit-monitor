@@ -7,8 +7,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"transit-monitor/internal/email"
 	"transit-monitor/internal/store"
 )
 
@@ -18,10 +20,19 @@ type Server struct {
 	store      *store.Store
 	health     *Health
 	staleAfter time.Duration
+	sender     email.Sender
+	publicURL  string
 }
 
 func NewServer(st *store.Store, h *Health, staleAfter time.Duration) *Server {
 	return &Server{store: st, health: h, staleAfter: staleAfter}
+}
+
+// EnableSubscriptions turns on the subscribe/verify/unsubscribe endpoints.
+// publicURL is the externally reachable base URL for email links.
+func (s *Server) EnableSubscriptions(sender email.Sender, publicURL string) {
+	s.sender = sender
+	s.publicURL = strings.TrimRight(publicURL, "/")
 }
 
 func (s *Server) Handler() http.Handler {
@@ -30,6 +41,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/disruptions", s.handleDisruptions)
 	mux.HandleFunc("GET /api/routes", s.handleRoutes)
 	mux.HandleFunc("GET /api/routes/{route}/history", s.handleRouteHistory)
+	mux.HandleFunc("POST /api/subscribe", s.handleSubscribe)
+	mux.HandleFunc("GET /api/verify", s.handleVerify)
+	mux.HandleFunc("GET /api/unsubscribe", s.handleUnsubscribe)
 	return withCORS(mux)
 }
 
@@ -38,7 +52,8 @@ func (s *Server) Handler() http.Handler {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

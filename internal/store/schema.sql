@@ -25,6 +25,29 @@ CREATE TABLE IF NOT EXISTS alert_events (
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Email subscriptions. One row per email; re-subscribing (even to change
+-- routes) resets verification and requires clicking a fresh confirm link —
+-- double opt-in, and nobody can silently edit your routes knowing only
+-- your email. token drives both the verify and unsubscribe links.
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id          BIGSERIAL PRIMARY KEY,
+    email       TEXT NOT NULL UNIQUE,
+    routes      TEXT[] NOT NULL,
+    token       TEXT NOT NULL UNIQUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    verified_at TIMESTAMPTZ
+);
+
+-- Claim log: one row per (subscription, event) email. The notifier inserts
+-- the claim and sends inside one transaction, so a restart mid-batch never
+-- produces duplicate emails (same durable-diffing discipline as ingestion).
+CREATE TABLE IF NOT EXISTS notifications_sent (
+    subscription_id BIGINT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    event_id        BIGINT NOT NULL REFERENCES alert_events(id) ON DELETE CASCADE,
+    sent_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (subscription_id, event_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_alert_events_alert ON alert_events (alert_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_alert_events_time  ON alert_events (occurred_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_active      ON alerts (last_seen_at) WHERE resolved_at IS NULL;

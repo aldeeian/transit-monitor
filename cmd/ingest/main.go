@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"transit-monitor/internal/api"
+	"transit-monitor/internal/email"
 	"transit-monitor/internal/gtfsrt"
+	"transit-monitor/internal/notify"
 	"transit-monitor/internal/store"
 )
 
@@ -21,6 +23,10 @@ func main() {
 	once := flag.Bool("once", false, "poll a single time and exit")
 	dsn := flag.String("db", os.Getenv("DATABASE_URL"), "Postgres DSN (empty = stdout-only, no persistence)")
 	listen := flag.String("listen", "127.0.0.1:8080", "API listen address (empty = no API; requires -db)")
+	publicURL := flag.String("public-url", "http://127.0.0.1:8080", "externally reachable API base URL for email links")
+	dashURL := flag.String("dashboard-url", "http://127.0.0.1:3000", "dashboard base URL for email links")
+	emailFrom := flag.String("email-from", "Transit Monitor <onboarding@resend.dev>", "From address for outgoing email")
+	outbox := flag.String("outbox", ".outbox", "dir for dev-mode emails (used when RESEND_API_KEY is unset)")
 	flag.Parse()
 
 	log.SetFlags(log.Ltime)
@@ -46,10 +52,31 @@ func main() {
 		log.Printf("db connected: %d known active alerts", len(prev))
 	}
 
+	// Email: real Resend sender when a key is present, otherwise .html
+	// files in the outbox dir — same pipeline either way.
+	var sender email.Sender
+	if key := os.Getenv("RESEND_API_KEY"); key != "" {
+		sender = &email.ResendSender{APIKey: key, From: *emailFrom}
+		log.Printf("email: sending via Resend as %q", *emailFrom)
+	} else {
+		sender = &email.DevSender{Dir: *outbox}
+		log.Printf("email: DEV MODE, writing to %s (set RESEND_API_KEY for real sending)", *outbox)
+	}
+
+	var notifier *notify.Notifier
+	if st != nil {
+		notifier = &notify.Notifier{
+			Store: st, Sender: sender,
+			PublicURL: strings.TrimRight(*publicURL, "/"),
+			Dashboard: strings.TrimRight(*dashURL, "/"),
+		}
+	}
+
 	health := &api.Health{}
 	if *listen != "" && st != nil && !*once {
 		// Health goes stale after 3 missed polls.
 		srv := api.NewServer(st, health, 3**interval)
+		srv.EnableSubscriptions(sender, *publicURL)
 		go func() {
 			if err := srv.Run(ctx, *listen); err != nil {
 				log.Printf("ERROR api server: %v", err)
@@ -106,6 +133,14 @@ func main() {
 		}
 		prev = gtfsrt.FingerprintMap(events)
 		health.RecordSuccess(ts, len(events))
+
+		// Notify on the poll cadence: anything just written (or left over
+		// from a previous failed pass) goes out now.
+		if notifier != nil {
+			if n := notifier.Run(fctx); n > 0 {
+				log.Printf("notify: sent %d email(s)", n)
+			}
+		}
 	}
 
 	poll()
