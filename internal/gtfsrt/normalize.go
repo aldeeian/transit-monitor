@@ -16,16 +16,16 @@ import (
 // Event is a normalized disruption event — the app-level shape that later
 // phases persist to Postgres and serve over the API.
 type Event struct {
-	ID          string     // feed entity ID, stable across polls
-	Routes      []string   // affected route IDs (sorted, deduped)
-	Stops       []string   // affected stop IDs (sorted, deduped)
-	Header      string     // short human-readable summary from the agency
-	Description string     // longer detail text, may be empty
-	Cause       string     // plain-language cause
-	Effect      string     // plain-language effect
-	Starts      *time.Time // first active period start, nil if open-ended
-	Ends        *time.Time // last active period end, nil if open-ended
-	Fingerprint string     // content hash used to detect updates to an alert
+	ID          string     `json:"id"`          // feed entity ID, stable across polls
+	Routes      []string   `json:"routes"`      // affected route IDs (sorted, deduped)
+	Stops       []string   `json:"stops"`       // affected stop IDs (sorted, deduped)
+	Header      string     `json:"header"`      // short human-readable summary from the agency
+	Description string     `json:"description"` // longer detail text, may be empty
+	Cause       string     `json:"cause"`       // plain-language cause
+	Effect      string     `json:"effect"`      // plain-language effect
+	Starts      *time.Time `json:"starts"`      // first active period start, nil if open-ended
+	Ends        *time.Time `json:"ends"`        // last active period end, nil if open-ended
+	Fingerprint string     `json:"fingerprint"` // content hash used to detect updates to an alert
 }
 
 var causeText = map[gtfs.Alert_Cause]string{

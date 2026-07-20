@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"transit-monitor/internal/api"
 	"transit-monitor/internal/gtfsrt"
 	"transit-monitor/internal/store"
 )
@@ -19,6 +20,7 @@ func main() {
 	interval := flag.Duration("interval", 30*time.Second, "poll interval")
 	once := flag.Bool("once", false, "poll a single time and exit")
 	dsn := flag.String("db", os.Getenv("DATABASE_URL"), "Postgres DSN (empty = stdout-only, no persistence)")
+	listen := flag.String("listen", "127.0.0.1:8080", "API listen address (empty = no API; requires -db)")
 	flag.Parse()
 
 	log.SetFlags(log.Ltime)
@@ -44,6 +46,17 @@ func main() {
 		log.Printf("db connected: %d known active alerts", len(prev))
 	}
 
+	health := &api.Health{}
+	if *listen != "" && st != nil && !*once {
+		// Health goes stale after 3 missed polls.
+		srv := api.NewServer(st, health, 3**interval)
+		go func() {
+			if err := srv.Run(ctx, *listen); err != nil {
+				log.Printf("ERROR api server: %v", err)
+			}
+		}()
+	}
+
 	poll := func() {
 		fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -51,6 +64,7 @@ func main() {
 		msg, err := fetcher.Fetch(fctx)
 		if err != nil {
 			log.Printf("ERROR poll failed (will retry next tick): %v", err)
+			health.RecordFailure()
 			return
 		}
 		events := gtfsrt.NormalizeAlerts(msg)
@@ -62,6 +76,7 @@ func main() {
 				printEvent("ACTIVE", ev)
 			}
 			prev = gtfsrt.FingerprintMap(events)
+			health.RecordSuccess(ts, len(events))
 			return
 		}
 
@@ -85,10 +100,12 @@ func main() {
 			// silently dropping events.
 			if err := st.ApplyPoll(fctx, d, events); err != nil {
 				log.Printf("ERROR db write failed (will retry next tick): %v", err)
+				health.RecordFailure()
 				return
 			}
 		}
 		prev = gtfsrt.FingerprintMap(events)
+		health.RecordSuccess(ts, len(events))
 	}
 
 	poll()

@@ -3,7 +3,23 @@
 Real-time delay & disruption monitor for Calgary Transit, built on the City of
 Calgary's public GTFS-Realtime feeds (refreshed every 30s, no API key).
 
-## Status: Phase 2 — Postgres persistence (done)
+## Status: Phase 3 — REST API (done)
+
+With `-db` set (and not `-once`), the ingest binary also serves a read-only
+JSON API (default `127.0.0.1:8080`, `-listen` to change, empty to disable):
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/health` | poller liveness — 200 while the last successful poll is < 3 intervals old, else 503 |
+| `GET /api/disruptions[?route=N]` | active disruptions, newest first |
+| `GET /api/routes?days=N` | per-route summary: active now + new disruptions in window |
+| `GET /api/routes/{route}/history?days=N` | daily new-disruption counts + event log (`days` clamped 1–90, default 14) |
+
+CORS is open for GETs (the Phase 4 dashboard runs on another origin).
+Responses declare `charset=utf-8` — Windows PowerShell 5.1 mis-decodes
+UTF-8 JSON without it.
+
+## Phase 2 — Postgres persistence (done)
 
 A Go service polls the Service Alerts feed, decodes the protobuf, normalizes
 each alert into a structured event, and diffs it against durable state in
@@ -58,7 +74,7 @@ go test ./... -short         # unit tests only, skips embedded Postgres
 
 1. ~~Phase 1: poll + parse + normalized stdout events~~
 2. ~~Phase 2: Postgres persistence + durable diffing~~
-3. Phase 3: REST API — current disruptions + history
+3. ~~Phase 3: REST API — current disruptions + history~~
 4. Phase 4: Next.js dashboard
 5. Phase 5: email subscriptions
 6. Phase 6: deploy + health monitoring

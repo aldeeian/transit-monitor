@@ -2,51 +2,11 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"net"
-	"path/filepath"
 	"testing"
-	"time"
-
-	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 
 	"transit-monitor/internal/gtfsrt"
+	"transit-monitor/internal/testpg"
 )
-
-// startPostgres boots a throwaway embedded Postgres for the test run.
-// First-ever run downloads the binaries (~50MB); subsequent runs are fast.
-func startPostgres(t *testing.T) string {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping embedded-postgres integration test in -short mode")
-	}
-
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
-
-	dir := t.TempDir()
-	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(uint32(port)).
-		Database("transit_test").
-		Username("postgres").
-		Password("postgres").
-		DataPath(filepath.Join(dir, "data")).
-		RuntimePath(filepath.Join(dir, "runtime")).
-		StartTimeout(120 * time.Second))
-	if err := pg.Start(); err != nil {
-		t.Fatalf("start embedded postgres: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := pg.Stop(); err != nil {
-			t.Errorf("stop embedded postgres: %v", err)
-		}
-	})
-	return fmt.Sprintf("postgres://postgres:postgres@127.0.0.1:%d/transit_test?sslmode=disable", port)
-}
 
 func event(id, header string) gtfsrt.Event {
 	ev := gtfsrt.Event{
@@ -72,7 +32,7 @@ func mustApply(t *testing.T, s *Store, prev map[string]string, curr []gtfsrt.Eve
 }
 
 func TestStoreLifecycle(t *testing.T) {
-	dsn := startPostgres(t)
+	dsn := testpg.Start(t)
 	ctx := context.Background()
 
 	s, err := Open(ctx, dsn)
