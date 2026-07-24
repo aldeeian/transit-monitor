@@ -6,9 +6,9 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
-	"log"
 	"strings"
 
 	"transit-monitor/internal/email"
@@ -22,28 +22,29 @@ type Notifier struct {
 	Dashboard string // base URL of the dashboard, for "view status" links
 }
 
-// Run sends every pending notification. Individual failures are logged and
-// left unclaimed for the next pass; they don't block the batch.
-func (n *Notifier) Run(ctx context.Context) (sent int) {
+// Run sends every pending notification and reports how many went out. A
+// failure on one recipient doesn't block the batch: it stays unclaimed for
+// the next pass and is joined into the returned error so the caller decides
+// how to surface it.
+func (n *Notifier) Run(ctx context.Context) (sent int, err error) {
 	pending, err := n.Store.PendingNotifications(ctx, 100)
 	if err != nil {
-		log.Printf("ERROR notify: list pending: %v", err)
-		return 0
+		return 0, fmt.Errorf("list pending: %w", err)
 	}
+	var errs []error
 	for _, p := range pending {
 		subject, body := n.alertEmail(p)
 		ok, err := n.Store.ClaimAndSend(ctx, p.SubscriptionID, p.EventID, func() error {
 			return n.Sender.Send(ctx, p.Email, subject, body)
 		})
-		if err != nil {
-			log.Printf("ERROR notify: send event %d to %s (will retry): %v", p.EventID, p.Email, err)
-			continue
-		}
 		if ok {
 			sent++
 		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("send event %d to %s: %w", p.EventID, p.Email, err))
+		}
 	}
-	return sent
+	return sent, errors.Join(errs...)
 }
 
 // matchedRoutes intersects the alert's routes with the subscriber's.
@@ -62,7 +63,13 @@ func matchedRoutes(alertRoutes, subRoutes []string) []string {
 }
 
 func (n *Notifier) alertEmail(p store.PendingNotification) (subject, body string) {
-	routes := strings.Join(matchedRoutes(p.AlertRoutes, p.SubRoutes), ", ")
+	matched := matchedRoutes(p.AlertRoutes, p.SubRoutes)
+	if len(matched) == 0 {
+		// The DB matched on route overlap, so this shouldn't happen; fall
+		// back to the alert's routes rather than panicking mid-batch.
+		matched = p.AlertRoutes
+	}
+	routes := strings.Join(matched, ", ")
 	subject = fmt.Sprintf("[Calgary Transit] Route %s: %s", routes, p.Effect)
 
 	var b strings.Builder
@@ -76,9 +83,9 @@ func (n *Notifier) alertEmail(p store.PendingNotification) (subject, body string
 		fmt.Fprintf(&b, `<pre style="white-space:pre-wrap;font-family:inherit;color:#444">%s</pre>`,
 			html.EscapeString(p.Description))
 	}
-	if n.Dashboard != "" {
+	if n.Dashboard != "" && len(matched) > 0 {
 		fmt.Fprintf(&b, `<p><a href="%s/route/%s">Live status for route %s</a></p>`,
-			n.Dashboard, html.EscapeString(matchedRoutes(p.AlertRoutes, p.SubRoutes)[0]), html.EscapeString(routes))
+			n.Dashboard, html.EscapeString(matched[0]), html.EscapeString(routes))
 	}
 	fmt.Fprintf(&b, `<hr><p style="color:#888;font-size:12px">You get these because you subscribed to route alerts. `+
 		`<a href="%s/api/unsubscribe?token=%s">Unsubscribe</a> (one click, no login).</p></div>`,

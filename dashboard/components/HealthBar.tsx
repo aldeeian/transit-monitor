@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API_BASE, HealthView, relTime } from "@/lib/api";
+import { HealthView, getJSON, relTime } from "@/lib/api";
 
 type State =
   | { kind: "loading" }
@@ -22,10 +22,11 @@ export default function HealthBar() {
     let stop = false;
     const load = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
-        const health = (await res.json()) as HealthView;
+        // getJSON keeps the 503 body: a stale poller still reports health.
+        const health = await getJSON<HealthView>("/api/health");
         if (!stop) setState({ kind: "loaded", health });
-      } catch {
+      } catch (e) {
+        console.error("health check failed", e);
         if (!stop) setState({ kind: "unreachable" });
       }
     };

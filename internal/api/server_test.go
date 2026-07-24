@@ -136,6 +136,17 @@ func TestAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("non-numeric days rejected", func(t *testing.T) {
+		code, body := get(t, h, "/api/routes?days=abc")
+		if code != 400 || body["error"] == nil {
+			t.Fatalf("non-numeric days should be 400: code=%d body=%v", code, body)
+		}
+		code, body = get(t, h, "/api/routes/90/history?days=abc")
+		if code != 400 || body["error"] == nil {
+			t.Fatalf("non-numeric days should be 400: code=%d body=%v", code, body)
+		}
+	})
+
 	t.Run("cors header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 		rec := httptest.NewRecorder()

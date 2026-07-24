@@ -15,7 +15,7 @@ import BarChart from "@/components/BarChart";
 export default function RouteView({ route }: { route: string }) {
   const [active, setActive] = useState<Disruption[] | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let stop = false;
@@ -32,10 +32,10 @@ export default function RouteView({ route }: { route: string }) {
         if (!stop) {
           setActive(d.disruptions);
           setHistory(h);
-          setError(false);
+          setError(null);
         }
-      } catch {
-        if (!stop) setError(true);
+      } catch (e) {
+        if (!stop) setError(e instanceof Error ? e.message : String(e));
       }
     };
     load();
@@ -47,7 +47,11 @@ export default function RouteView({ route }: { route: string }) {
   }, [route]);
 
   if (error && !active) {
-    return <p className="empty">api unreachable — is the ingest service running?</p>;
+    return (
+      <p className="empty">
+        could not load route {route} — is the ingest service running? ({error})
+      </p>
+    );
   }
   if (!active || !history) return <p className="empty">loading…</p>;
 

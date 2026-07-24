@@ -17,7 +17,7 @@ const sevRank = { red: 0, amber: 1, gray: 2 } as const;
 export default function DisruptionsTable() {
   const [disruptions, setDisruptions] = useState<Disruption[] | null>(null);
   const [routes, setRoutes] = useState<RouteSummary[]>([]);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [routeFilter, setRouteFilter] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [sort, setSort] = useState<Sort>("newest");
@@ -34,10 +34,10 @@ export default function DisruptionsTable() {
         if (!stop) {
           setDisruptions(d.disruptions);
           setRoutes(r.routes);
-          setError(false);
+          setError(null);
         }
-      } catch {
-        if (!stop) setError(true);
+      } catch (e) {
+        if (!stop) setError(e instanceof Error ? e.message : String(e));
       }
     };
     load();
@@ -80,7 +80,11 @@ export default function DisruptionsTable() {
     });
 
   if (error && !disruptions) {
-    return <p className="empty">api unreachable — is the ingest service running?</p>;
+    return (
+      <p className="empty">
+        could not load disruptions — is the ingest service running? ({error})
+      </p>
+    );
   }
   if (!disruptions) return <p className="empty">loading…</p>;
 

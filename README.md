@@ -67,7 +67,7 @@ With `-db` set (and not `-once`), the binary serves a read-only JSON API
 | `GET /api/health` | poller liveness — 200 while the last successful poll is < 3 intervals old, else 503 |
 | `GET /api/disruptions[?route=N]` | active disruptions, newest first |
 | `GET /api/routes?days=N` | per-route summary: active now + new disruptions in window |
-| `GET /api/routes/{route}/history?days=N` | daily new-disruption counts + event log (`days` clamped 1–90, default 14) |
+| `GET /api/routes/{route}/history?days=N` | daily new-disruption counts + event log (`days` clamped 1–90, default 14; non-numeric `days` is a 400) |
 | `POST /api/subscribe` | start a double-opt-in email subscription (rate-limited per IP and per email) |
 | `GET /api/verify` · `GET /api/unsubscribe` | confirm / cancel a subscription via emailed token link |
 

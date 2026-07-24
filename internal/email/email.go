@@ -20,6 +20,17 @@ type Sender interface {
 	Send(ctx context.Context, to, subject, htmlBody string) error
 }
 
+// APIError is returned when the upstream email provider rejects a send, so
+// callers can branch on the status code instead of matching on strings.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("resend returned %d: %s", e.StatusCode, e.Body)
+}
+
 // DevSender writes each email as an .html file into Dir. The filename
 // carries the recipient and subject for easy manual inspection.
 type DevSender struct {
@@ -81,8 +92,11 @@ func (r *ResendSender) Send(ctx context.Context, to, subject, htmlBody string) e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("resend returned %d: %s", resp.StatusCode, body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		if readErr != nil {
+			body = append(body, fmt.Sprintf(" (body truncated: %v)", readErr)...)
+		}
+		return &APIError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	return nil
 }

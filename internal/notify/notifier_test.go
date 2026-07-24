@@ -74,6 +74,16 @@ func verifiedSub(t *testing.T, s *store.Store, ctx context.Context, email string
 	return sub
 }
 
+// mustRun runs the notifier and fails the test on any send error.
+func mustRun(t *testing.T, n *Notifier, ctx context.Context) int {
+	t.Helper()
+	sent, err := n.Run(ctx)
+	if err != nil {
+		t.Fatalf("notifier run: %v", err)
+	}
+	return sent
+}
+
 func TestNotifierSendsOncePerSubscriberEvent(t *testing.T) {
 	s, ctx := setup(t)
 	verifiedSub(t, s, ctx, "a@example.com", "3")
@@ -90,17 +100,17 @@ func TestNotifierSendsOncePerSubscriberEvent(t *testing.T) {
 	n := &Notifier{Store: s, Sender: f, PublicURL: "http://api.test", Dashboard: "http://dash.test"}
 
 	// d1(route 3) -> a and b; d2(route 90) -> b; d3(route 7) -> nobody. = 3
-	if sent := n.Run(ctx); sent != 3 {
+	if sent := mustRun(t, n, ctx); sent != 3 {
 		t.Fatalf("first pass sent %d, want 3", sent)
 	}
 	// Second pass (same DB state): nothing new.
-	if sent := n.Run(ctx); sent != 0 {
+	if sent := mustRun(t, n, ctx); sent != 0 {
 		t.Fatalf("second pass sent %d, want 0 (idempotency)", sent)
 	}
 
 	// Notifier "restart": a brand-new instance must also send nothing.
 	n2 := &Notifier{Store: s, Sender: f, PublicURL: "http://api.test"}
-	if sent := n2.Run(ctx); sent != 0 {
+	if sent := mustRun(t, n2, ctx); sent != 0 {
 		t.Fatalf("restarted notifier resent %d emails, want 0", sent)
 	}
 
@@ -115,7 +125,7 @@ func TestNotifierSendsOncePerSubscriberEvent(t *testing.T) {
 
 	// New alert later: only route-3 subscribers notified, exactly once each.
 	ingest(t, s, ctx, prev, alert("d1", "3"), alert("d2", "90"), alert("d3", "7"), alert("d4", "3"))
-	if sent := n.Run(ctx); sent != 2 {
+	if sent := mustRun(t, n, ctx); sent != 2 {
 		t.Fatalf("after new alert sent %d, want 2", sent)
 	}
 }
@@ -129,19 +139,23 @@ func TestNotifierRetriesFailedSendsWithoutDuplicating(t *testing.T) {
 	// Provider fails for one recipient mid-batch — like a crash/outage.
 	f := &fakeSender{failTo: map[string]bool{"down@example.com": true}}
 	n := &Notifier{Store: s, Sender: f, PublicURL: "http://api.test"}
-	if sent := n.Run(ctx); sent != 1 {
+	sent, err := n.Run(ctx)
+	if sent != 1 {
 		t.Fatalf("outage pass sent %d, want 1", sent)
+	}
+	if err == nil || !strings.Contains(err.Error(), "down@example.com") {
+		t.Fatalf("outage pass should report the failed recipient, got %v", err)
 	}
 
 	// Provider recovers; retry pass sends ONLY the failed one.
 	f.failTo = nil
-	if sent := n.Run(ctx); sent != 1 {
+	if sent := mustRun(t, n, ctx); sent != 1 {
 		t.Fatalf("retry pass sent %d, want exactly 1", sent)
 	}
 	if f.count() != 2 {
 		t.Fatalf("total sends %d, want 2 (no duplicates for ok@)", f.count())
 	}
-	if sent := n.Run(ctx); sent != 0 {
+	if sent := mustRun(t, n, ctx); sent != 0 {
 		t.Fatal("third pass should send nothing")
 	}
 }
@@ -154,7 +168,7 @@ func TestSubscriberNotFloodedWithBacklog(t *testing.T) {
 	verifiedSub(t, s, ctx, "late@example.com", "3")
 	f := &fakeSender{}
 	n := &Notifier{Store: s, Sender: f, PublicURL: "http://api.test"}
-	if sent := n.Run(ctx); sent != 0 {
+	if sent := mustRun(t, n, ctx); sent != 0 {
 		t.Fatalf("new subscriber got %d backlog emails, want 0", sent)
 	}
 }
@@ -184,7 +198,7 @@ func TestResubscribeResetsVerification(t *testing.T) {
 	ingest(t, s, ctx, map[string]string{}, alert("d9", "90"))
 	f := &fakeSender{}
 	n := &Notifier{Store: s, Sender: f, PublicURL: "http://api.test"}
-	if sent := n.Run(ctx); sent != 0 {
+	if sent := mustRun(t, n, ctx); sent != 0 {
 		t.Fatalf("unre-verified subscriber got %d emails, want 0", sent)
 	}
 }
@@ -205,7 +219,7 @@ func TestUnsubscribeStopsEmails(t *testing.T) {
 	ingest(t, s, ctx, map[string]string{}, alert("d1", "3"))
 	f := &fakeSender{}
 	n := &Notifier{Store: s, Sender: f, PublicURL: "http://api.test"}
-	if sent := n.Run(ctx); sent != 0 {
+	if sent := mustRun(t, n, ctx); sent != 0 {
 		t.Fatalf("unsubscribed address got %d emails", sent)
 	}
 }
