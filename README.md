@@ -109,6 +109,11 @@ static build). Environment variables:
 - `PUBLIC_URL` — the API's public base URL, used in email verify/unsubscribe links.
 - `DASHBOARD_URL` — the dashboard base URL, used in "view status" email links.
 - `PORT` — read automatically when the platform provides it.
+- `CORS_ORIGINS` — comma-separated origins allowed to POST `/api/subscribe`
+  cross-origin (defaults to `DASHBOARD_URL`). Reads stay open to any origin.
+- `TRUST_PROXY` — set when a reverse proxy fronts the service, so per-IP rate
+  limits may use `X-Forwarded-For`. Off by default: the header is spoofable
+  when the service is reachable directly.
 
 A free Render web service sleeps after 15 idle minutes; an UptimeRobot ping on
 `/api/health` keeps it warm and doubles as alerting (the endpoint returns 503

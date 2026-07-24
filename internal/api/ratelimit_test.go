@@ -57,11 +57,14 @@ func TestRateLimiterPrune(t *testing.T) {
 func TestClientIP(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/subscribe", nil)
 	r.RemoteAddr = "10.0.0.7:1234"
-	if ip := clientIP(r); ip != "10.0.0.7" {
+	if ip := clientIP(r, false); ip != "10.0.0.7" {
 		t.Errorf("RemoteAddr ip = %q", ip)
 	}
 	r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
-	if ip := clientIP(r); ip != "203.0.113.9" {
-		t.Errorf("XFF ip = %q", ip)
+	if ip := clientIP(r, false); ip != "10.0.0.7" {
+		t.Errorf("untrusted XFF must be ignored, got %q", ip)
+	}
+	if ip := clientIP(r, true); ip != "10.0.0.1" {
+		t.Errorf("trusted XFF should use the last hop, got %q", ip)
 	}
 }

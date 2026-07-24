@@ -17,3 +17,7 @@ services:
         sync: false # https://<this-service>.onrender.com
       - key: DASHBOARD_URL
         sync: false # https://<dashboard>.vercel.app
+      # Render terminates TLS in front of the service and appends
+      # X-Forwarded-For, so per-IP rate limits may trust it there.
+      - key: TRUST_PROXY
+        value: "true"
