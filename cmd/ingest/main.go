@@ -27,6 +27,8 @@ func main() {
 	dashURL := flag.String("dashboard-url", envOr("DASHBOARD_URL", "http://127.0.0.1:3000"), "dashboard base URL for email links")
 	emailFrom := flag.String("email-from", envOr("EMAIL_FROM", "Transit Monitor <onboarding@resend.dev>"), "From address for outgoing email")
 	outbox := flag.String("outbox", ".outbox", "dir for dev-mode emails (used when RESEND_API_KEY is unset)")
+	corsOrigins := flag.String("cors-origins", envOr("CORS_ORIGINS", ""), "comma-separated origins allowed to POST /api/subscribe cross-origin (default: DASHBOARD_URL)")
+	trustProxy := flag.Bool("trust-proxy", envBool("TRUST_PROXY"), "trust X-Forwarded-For for client IPs (only behind a reverse proxy)")
 	flag.Parse()
 
 	log.SetFlags(log.Ltime)
@@ -77,6 +79,14 @@ func main() {
 		// Health goes stale after 3 missed polls.
 		srv := api.NewServer(st, health, 3**interval)
 		srv.EnableSubscriptions(sender, *publicURL)
+		// Cross-origin writes come from the dashboard only; anything else
+		// could drive confirmation emails from a visitor's browser.
+		origins := *corsOrigins
+		if origins == "" {
+			origins = *dashURL
+		}
+		srv.AllowWriteOrigins(strings.Split(origins, ",")...)
+		srv.TrustProxy(*trustProxy)
 		go func() {
 			if err := srv.Run(ctx, *listen); err != nil {
 				log.Printf("ERROR api server: %v", err)
@@ -160,6 +170,15 @@ func main() {
 			poll()
 		}
 	}
+}
+
+// envBool reads a boolean-ish env var ("1", "true", "yes").
+func envBool(key string) bool {
+	switch strings.ToLower(os.Getenv(key)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func envOr(key, fallback string) string {

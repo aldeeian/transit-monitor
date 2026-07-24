@@ -17,12 +17,14 @@ import (
 const defaultHistoryDays = 14
 
 type Server struct {
-	store      *store.Store
-	health     *Health
-	staleAfter time.Duration
-	sender     email.Sender
-	publicURL  string
-	limiter    *rateLimiter
+	store        *store.Store
+	health       *Health
+	staleAfter   time.Duration
+	sender       email.Sender
+	publicURL    string
+	limiter      *rateLimiter
+	writeOrigins map[string]bool
+	trustProxy   bool
 }
 
 func NewServer(st *store.Store, h *Health, staleAfter time.Duration) *Server {
@@ -36,6 +38,24 @@ func (s *Server) EnableSubscriptions(sender email.Sender, publicURL string) {
 	s.publicURL = strings.TrimRight(publicURL, "/")
 }
 
+// AllowWriteOrigins restricts which browser origins may call the state-changing
+// endpoints cross-origin. Reads stay open to any origin; writes (subscribe)
+// send email, so an unrestricted origin lets any site drive them from a
+// visitor's browser.
+func (s *Server) AllowWriteOrigins(origins ...string) {
+	s.writeOrigins = map[string]bool{}
+	for _, o := range origins {
+		if o = strings.TrimRight(strings.TrimSpace(o), "/"); o != "" {
+			s.writeOrigins[o] = true
+		}
+	}
+}
+
+// TrustProxy declares that the service runs behind a reverse proxy that
+// appends X-Forwarded-For, so the header may be used for client identity.
+// Off by default: a spoofable header would make per-IP rate limits useless.
+func (s *Server) TrustProxy(v bool) { s.trustProxy = v }
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -45,22 +65,46 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/subscribe", s.handleSubscribe)
 	mux.HandleFunc("GET /api/verify", s.handleVerify)
 	mux.HandleFunc("GET /api/unsubscribe", s.handleUnsubscribe)
-	return withCORS(mux)
+	mux.HandleFunc("OPTIONS /api/", s.handlePreflight)
+	return s.withCORS(mux)
 }
 
-// withCORS allows the browser dashboard on another origin to read the API.
-// GET-only, no credentials, so permissive is fine.
-func withCORS(next http.Handler) http.Handler {
+// withCORS lets any origin read the public data, while cross-origin writes are
+// limited to the configured dashboard origins (none configured = same-origin
+// only). No credentials are ever accepted.
+func (s *Server) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Vary", "Origin")
+		origin := r.Header.Get("Origin")
+		if s.isWriteMethod(r) {
+			if origin != "" && !s.writeOrigins[strings.TrimRight(origin, "/")] {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin not allowed"})
+				return
+			}
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isWriteMethod reports whether the request is a state-changing call or the
+// preflight for one.
+func (s *Server) isWriteMethod(r *http.Request) bool {
+	if r.Method == http.MethodOptions {
+		return r.Header.Get("Access-Control-Request-Method") == http.MethodPost
+	}
+	return r.Method != http.MethodGet && r.Method != http.MethodHead
+}
+
+func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +116,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, v)
 }
 
+// maxRouteLen bounds route identifiers accepted from the URL; real GTFS route
+// IDs are a handful of characters.
+const maxRouteLen = 10
+
 func (s *Server) handleDisruptions(w http.ResponseWriter, r *http.Request) {
-	alerts, err := s.store.ActiveDisruptions(r.Context(), r.URL.Query().Get("route"))
+	route := r.URL.Query().Get("route")
+	if len(route) > maxRouteLen {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid route"})
+		return
+	}
+	alerts, err := s.store.ActiveDisruptions(r.Context(), route)
 	if err != nil {
 		serverError(w, "list disruptions", err)
 		return
@@ -93,6 +146,10 @@ func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRouteHistory(w http.ResponseWriter, r *http.Request) {
 	route := r.PathValue("route")
+	if route == "" || len(route) > maxRouteLen {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid route"})
+		return
+	}
 	days := queryDays(r)
 	daily, events, err := s.store.RouteHistory(r.Context(), route, days)
 	if err != nil {

@@ -1,10 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"html"
+	"html/template"
 	"log"
 	"net/http"
 	"net/mail"
@@ -27,7 +27,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	// The endpoint sends email, so it gets abuse limits: per-IP and
 	// per-email. Generous for humans, hostile to scripts.
-	if !s.limiter.allow("ip:"+clientIP(r), 5, time.Hour) {
+	if !s.limiter.allow("ip:"+clientIP(r, s.trustProxy), 5, time.Hour) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many subscribe attempts, try again later"})
 		return
 	}
@@ -95,8 +95,8 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	htmlPage(w, http.StatusOK, "Subscription confirmed",
-		fmt.Sprintf("You'll now get alerts for route(s) <strong>%s</strong> at %s. New disruptions reach you within about a minute of Calgary Transit publishing them.",
-			html.EscapeString(strings.Join(sub.Routes, ", ")), html.EscapeString(sub.Email)))
+		"You'll now get alerts for route(s) <strong>{{.Routes}}</strong> at {{.Email}}. New disruptions reach you within about a minute of Calgary Transit publishing them.",
+		map[string]string{"Routes": strings.Join(sub.Routes, ", "), "Email": sub.Email})
 }
 
 func (s *Server) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -112,20 +112,43 @@ func (s *Server) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	htmlPage(w, http.StatusOK, "Unsubscribed",
-		fmt.Sprintf("%s will receive no further alerts. Resubscribe on the dashboard any time.", html.EscapeString(email)))
+		"{{.Email}} will receive no further alerts. Resubscribe on the dashboard any time.",
+		map[string]string{"Email": email})
 }
 
-// htmlPage renders the tiny pages behind email links, styled to match the
-// dashboard's utilitarian look.
-func htmlPage(w http.ResponseWriter, code int, title, msg string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(code)
-	fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>%s — transit-monitor</title>
+const pageTmpl = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} — transit-monitor</title>
 <body style="background:#0b0e11;color:#c9d1d9;font-family:ui-monospace,Consolas,monospace;display:grid;place-items:center;min-height:90vh;margin:0">
 <div style="max-width:480px;padding:24px;border:1px solid #21262f">
 <div style="color:#8b949e;font-size:12px;margin-bottom:8px">CALGARY TRANSIT MONITOR</div>
-<h1 style="font-size:18px;margin:0 0 12px">%s</h1>
-<p style="line-height:1.6;color:#9da7b1;font-size:14px;margin:0">%s</p>
-</div>`, html.EscapeString(title), html.EscapeString(title), msg)
+<h1 style="font-size:18px;margin:0 0 12px">{{.Title}}</h1>
+<p style="line-height:1.6;color:#9da7b1;font-size:14px;margin:0">{{.Body}}</p>
+</div>`
+
+// htmlPage renders the tiny pages behind email links, styled to match the
+// dashboard's utilitarian look. msg is itself a template rendered against
+// data, so caller-supplied values (emails, route names) are escaped by
+// html/template rather than by hand.
+func htmlPage(w http.ResponseWriter, code int, title, msg string, data ...map[string]string) {
+	values := map[string]string{}
+	if len(data) > 0 {
+		values = data[0]
+	}
+	var body bytes.Buffer
+	if err := template.Must(template.New("msg").Parse(msg)).Execute(&body, values); err != nil {
+		serverError(w, "render page", err)
+		return
+	}
+	var page bytes.Buffer
+	if err := template.Must(template.New("page").Parse(pageTmpl)).
+		Execute(&page, map[string]any{"Title": title, "Body": template.HTML(body.String())}); err != nil {
+		serverError(w, "render page", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	if _, err := w.Write(page.Bytes()); err != nil {
+		log.Printf("ERROR write page: %v", err)
+	}
 }

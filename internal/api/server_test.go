@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +143,35 @@ func TestAPI(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Error("missing CORS header")
+		}
+	})
+
+	t.Run("cross-origin writes restricted", func(t *testing.T) {
+		srv := NewServer(s, health, time.Minute)
+		srv.AllowWriteOrigins("https://dash.example")
+		wh := srv.Handler()
+
+		post := func(origin string) int {
+			req := httptest.NewRequest(http.MethodPost, "/api/subscribe", strings.NewReader(`{}`))
+			req.Header.Set("Origin", origin)
+			rec := httptest.NewRecorder()
+			wh.ServeHTTP(rec, req)
+			return rec.Code
+		}
+		if code := post("https://evil.example"); code != http.StatusForbidden {
+			t.Errorf("foreign origin POST = %d, want 403", code)
+		}
+		// Allowed origin gets past CORS; subscriptions are off in this
+		// server, so the handler itself answers 503.
+		if code := post("https://dash.example"); code == http.StatusForbidden {
+			t.Error("allowed origin should not be blocked by CORS")
+		}
+	})
+
+	t.Run("oversized route rejected", func(t *testing.T) {
+		code, _ := get(t, h, "/api/disruptions?route="+strings.Repeat("9", 64))
+		if code != http.StatusBadRequest {
+			t.Errorf("code = %d, want 400", code)
 		}
 	})
 }

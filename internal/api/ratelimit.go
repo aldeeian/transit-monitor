@@ -61,12 +61,17 @@ func (rl *rateLimiter) prune(window time.Duration) {
 	}
 }
 
-// clientIP extracts the caller's IP, trusting X-Forwarded-For's first hop
-// (we deploy behind a single reverse proxy on Railway/Fly/Render).
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-			return first
+// clientIP extracts the caller's IP. X-Forwarded-For is only consulted when
+// the deployment declares a reverse proxy in front (TrustProxy), and then only
+// its last hop — the entry appended by that proxy, which is the one a client
+// cannot forge by sending its own X-Forwarded-For.
+func clientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			hops := strings.Split(xff, ",")
+			if last := strings.TrimSpace(hops[len(hops)-1]); last != "" {
+				return last
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

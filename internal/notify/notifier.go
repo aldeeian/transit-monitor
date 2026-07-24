@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"net/url"
 	"strings"
 
 	"transit-monitor/internal/email"
@@ -62,7 +63,8 @@ func matchedRoutes(alertRoutes, subRoutes []string) []string {
 }
 
 func (n *Notifier) alertEmail(p store.PendingNotification) (subject, body string) {
-	routes := strings.Join(matchedRoutes(p.AlertRoutes, p.SubRoutes), ", ")
+	matched := matchedRoutes(p.AlertRoutes, p.SubRoutes)
+	routes := strings.Join(matched, ", ")
 	subject = fmt.Sprintf("[Calgary Transit] Route %s: %s", routes, p.Effect)
 
 	var b strings.Builder
@@ -76,13 +78,13 @@ func (n *Notifier) alertEmail(p store.PendingNotification) (subject, body string
 		fmt.Fprintf(&b, `<pre style="white-space:pre-wrap;font-family:inherit;color:#444">%s</pre>`,
 			html.EscapeString(p.Description))
 	}
-	if n.Dashboard != "" {
+	if n.Dashboard != "" && len(matched) > 0 {
 		fmt.Fprintf(&b, `<p><a href="%s/route/%s">Live status for route %s</a></p>`,
-			n.Dashboard, html.EscapeString(matchedRoutes(p.AlertRoutes, p.SubRoutes)[0]), html.EscapeString(routes))
+			n.Dashboard, url.PathEscape(matched[0]), html.EscapeString(routes))
 	}
 	fmt.Fprintf(&b, `<hr><p style="color:#888;font-size:12px">You get these because you subscribed to route alerts. `+
 		`<a href="%s/api/unsubscribe?token=%s">Unsubscribe</a> (one click, no login).</p></div>`,
-		n.PublicURL, p.Token)
+		n.PublicURL, url.QueryEscape(p.Token))
 	return subject, b.String()
 }
 
@@ -95,6 +97,6 @@ func ConfirmationEmail(publicURL string, sub store.Subscription) (subject, body 
 		`<p><a href="%s/api/verify?token=%s">Confirm subscription</a></p>`+
 		`<p style="color:#888;font-size:12px">No alerts are sent until you confirm. `+
 		`If you didn't request this, ignore this email — the subscription stays inactive.</p></div>`,
-		html.EscapeString(routes), publicURL, sub.Token)
+		html.EscapeString(routes), publicURL, url.QueryEscape(sub.Token))
 	return subject, body
 }

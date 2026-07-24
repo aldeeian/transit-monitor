@@ -6,6 +6,9 @@
     "build": "next build",
     "start": "next start"
   },
+  "overrides": {
+    "postcss": "8.5.19"
+  },
   "dependencies": {
     "next": "^16",
     "react": "^19",
