@@ -13,10 +13,12 @@ import (
 	"time"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
+
+	"transit-monitor/internal/store"
 )
 
 func main() {
-	port := flag.Uint("port", 5433, "port to listen on")
+	port := flag.Uint("port", store.DefaultLocalPort, "port to listen on")
 	dir := flag.String("dir", ".devdb", "directory for binaries + data")
 	flag.Parse()
 
@@ -38,7 +40,7 @@ func main() {
 	if err := pg.Start(); err != nil {
 		log.Fatalf("start: %v", err)
 	}
-	fmt.Printf("\nready. DSN:\n  postgres://postgres:postgres@127.0.0.1:%d/transit?sslmode=disable\n\nctrl-c to stop.\n", *port)
+	fmt.Printf("\nready. DSN:\n  %s\n\nctrl-c to stop.\n", store.LocalDSNForPort(*port))
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt)

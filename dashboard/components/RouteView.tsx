@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Disruption,
@@ -10,41 +9,27 @@ import {
   shortDate,
   relTime,
 } from "@/lib/api";
+import { usePolledData } from "@/lib/usePolledData";
 import BarChart from "@/components/BarChart";
 
 export default function RouteView({ route }: { route: string }) {
-  const [active, setActive] = useState<Disruption[] | null>(null);
-  const [history, setHistory] = useState<HistoryResponse | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const [d, h] = await Promise.all([
-          getJSON<{ disruptions: Disruption[] }>(
-            `/api/disruptions?route=${encodeURIComponent(route)}`,
-          ),
-          getJSON<HistoryResponse>(
-            `/api/routes/${encodeURIComponent(route)}/history?days=14`,
-          ),
-        ]);
-        if (!stop) {
-          setActive(d.disruptions);
-          setHistory(h);
-          setError(false);
-        }
-      } catch {
-        if (!stop) setError(true);
-      }
-    };
-    load();
-    const iv = setInterval(load, 30_000);
-    return () => {
-      stop = true;
-      clearInterval(iv);
-    };
-  }, [route]);
+  const { data, error } = usePolledData(
+    async () => {
+      const [d, h] = await Promise.all([
+        getJSON<{ disruptions: Disruption[] }>(
+          `/api/disruptions?route=${encodeURIComponent(route)}`,
+        ),
+        getJSON<HistoryResponse>(
+          `/api/routes/${encodeURIComponent(route)}/history?days=14`,
+        ),
+      ]);
+      return { active: d.disruptions, history: h };
+    },
+    30_000,
+    [route],
+  );
+  const active = data?.active ?? null;
+  const history = data?.history ?? null;
 
   if (error && !active) {
     return <p className="empty">api unreachable — is the ingest service running?</p>;

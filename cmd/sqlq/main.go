@@ -11,21 +11,20 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"transit-monitor/internal/store"
 )
 
 func main() {
 	dsn := flag.String("db", os.Getenv("DATABASE_URL"), "Postgres DSN")
 	flag.Parse()
-	if *dsn == "" {
-		*dsn = "postgres://postgres:postgres@127.0.0.1:5433/transit?sslmode=disable"
-	}
 	query := strings.Join(flag.Args(), " ")
 	if query == "" {
 		log.Fatal("usage: sqlq [-db dsn] <sql>")
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, *dsn)
+	pool, err := pgxpool.New(ctx, store.DSNOrLocal(*dsn))
 	if err != nil {
 		log.Fatal(err)
 	}
