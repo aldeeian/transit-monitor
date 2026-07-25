@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { HealthView, getJSON, relTime } from "@/lib/api";
-
-type State =
-  | { kind: "loading" }
-  | { kind: "unreachable" }
-  | { kind: "loaded"; health: HealthView };
+import { usePolledData } from "@/lib/usePolledData";
 
 /**
  * Poller/system health, always visible in the top bar. Three honest states:
@@ -14,36 +10,18 @@ type State =
  * poller hasn't succeeded within its window; OFFLINE (red) — API gone.
  */
 export default function HealthBar() {
-  const [state, setState] = useState<State>({ kind: "loading" });
+  const { data: health, error } = usePolledData(
+    () => getJSON<HealthView>("/api/health"),
+    15_000,
+  );
   // tick forces re-render so "Xs ago" ages between polls
   const [, setTick] = useState(0);
-
   useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        // getJSON keeps the 503 body: a stale poller still reports health.
-        const health = await getJSON<HealthView>("/api/health");
-        if (!stop) setState({ kind: "loaded", health });
-      } catch (e) {
-        console.error("health check failed", e);
-        if (!stop) setState({ kind: "unreachable" });
-      }
-    };
-    load();
-    const poll = setInterval(load, 15_000);
     const tick = setInterval(() => setTick((t) => t + 1), 5_000);
-    return () => {
-      stop = true;
-      clearInterval(poll);
-      clearInterval(tick);
-    };
+    return () => clearInterval(tick);
   }, []);
 
-  if (state.kind === "loading") {
-    return <span className="health">health: …</span>;
-  }
-  if (state.kind === "unreachable") {
+  if (error) {
     return (
       <span className="health">
         <span className="dot down" />
@@ -51,7 +29,10 @@ export default function HealthBar() {
       </span>
     );
   }
-  const h = state.health;
+  if (!health) {
+    return <span className="health">health: …</span>;
+  }
+  const h = health;
   if (!h.ok) {
     return (
       <span className="health" title="The data poller has not succeeded recently; shown data may be outdated.">

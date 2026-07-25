@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Disruption,
@@ -9,44 +9,27 @@ import {
   severity,
   shortDate,
 } from "@/lib/api";
+import { usePolledData } from "@/lib/usePolledData";
 
 type Sort = "newest" | "severity" | "route";
 
 const sevRank = { red: 0, amber: 1, gray: 2 } as const;
 
 export default function DisruptionsTable() {
-  const [disruptions, setDisruptions] = useState<Disruption[] | null>(null);
-  const [routes, setRoutes] = useState<RouteSummary[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [routeFilter, setRouteFilter] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [sort, setSort] = useState<Sort>("newest");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const [d, r] = await Promise.all([
-          getJSON<{ disruptions: Disruption[] }>("/api/disruptions"),
-          getJSON<{ routes: RouteSummary[] }>("/api/routes"),
-        ]);
-        if (!stop) {
-          setDisruptions(d.disruptions);
-          setRoutes(r.routes);
-          setError(null);
-        }
-      } catch (e) {
-        if (!stop) setError(e instanceof Error ? e.message : String(e));
-      }
-    };
-    load();
-    const iv = setInterval(load, 30_000);
-    return () => {
-      stop = true;
-      clearInterval(iv);
-    };
-  }, []);
+  const { data, error } = usePolledData(async () => {
+    const [d, r] = await Promise.all([
+      getJSON<{ disruptions: Disruption[] }>("/api/disruptions"),
+      getJSON<{ routes: RouteSummary[] }>("/api/routes"),
+    ]);
+    return { disruptions: d.disruptions, routes: r.routes };
+  }, 30_000);
+  const disruptions = data?.disruptions ?? null;
+  const routes = data?.routes ?? [];
 
   const shown = useMemo(() => {
     if (!disruptions) return [];
