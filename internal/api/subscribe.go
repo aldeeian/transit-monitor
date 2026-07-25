@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"transit-monitor/internal/email"
 	"transit-monitor/internal/notify"
 	"transit-monitor/internal/store"
 )
@@ -66,7 +67,8 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if err := s.sender.Send(r.Context(), sub.Email, subject, body); err != nil {
 		// Resend sandbox (no verified domain yet) 403s any recipient other
 		// than the account owner — surface that honestly instead of a 500.
-		if strings.Contains(err.Error(), "403") {
+		var apiErr *email.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
 			log.Printf("subscribe: sandbox restriction for %s", sub.Email)
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 				"error": "email alerts are in a limited beta and not open to new addresses yet — check back soon",

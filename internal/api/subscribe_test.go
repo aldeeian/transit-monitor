@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"transit-monitor/internal/email"
 	"transit-monitor/internal/store"
 	"transit-monitor/internal/testpg"
 )
@@ -184,7 +185,7 @@ func TestSubscribeSenderFailures(t *testing.T) {
 
 	t.Run("sandbox 403 surfaces as 503", func(t *testing.T) {
 		srv := NewServer(st, &Health{}, time.Minute)
-		srv.EnableSubscriptions(&recordingSender{err: errors.New("resend returned 403: not verified")}, "https://api.example.com")
+		srv.EnableSubscriptions(&recordingSender{err: &email.APIError{StatusCode: http.StatusForbidden, Body: "not verified"}}, "https://api.example.com")
 		code, body := postSubscribe(t, srv.Handler(), "10.3.0.1", `{"email":"sandbox@b.com","routes":["3"]}`)
 		if code != http.StatusServiceUnavailable || !strings.Contains(body["error"].(string), "limited beta") {
 			t.Fatalf("code=%d body=%v, want 503 beta message", code, body)

@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -82,7 +83,10 @@ func (s *Server) handleDisruptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
-	days := queryDays(r)
+	days, ok := queryDays(w, r)
+	if !ok {
+		return
+	}
 	summary, err := s.store.RoutesSummary(r.Context(), days)
 	if err != nil {
 		serverError(w, "routes summary", err)
@@ -93,7 +97,10 @@ func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRouteHistory(w http.ResponseWriter, r *http.Request) {
 	route := r.PathValue("route")
-	days := queryDays(r)
+	days, ok := queryDays(w, r)
+	if !ok {
+		return
+	}
 	daily, events, err := s.store.RouteHistory(r.Context(), route, days)
 	if err != nil {
 		serverError(w, "route history", err)
@@ -104,16 +111,27 @@ func (s *Server) handleRouteHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// queryDays parses ?days=N, clamped to [1, 90], default 14.
-func queryDays(r *http.Request) int {
-	n, err := strconv.Atoi(r.URL.Query().Get("days"))
-	if err != nil || n < 1 {
-		return defaultHistoryDays
+// queryDays parses ?days=N, clamped to [1, 90], default 14 when absent. A
+// non-numeric value is a client mistake, so it gets a 400 rather than
+// silently returning a window the caller never asked for; ok reports
+// whether the caller should keep handling the request.
+func queryDays(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("days")
+	if raw == "" {
+		return defaultHistoryDays, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "days must be an integer"})
+		return 0, false
+	}
+	if n < 1 {
+		return defaultHistoryDays, true
 	}
 	if n > 90 {
-		return 90
+		return 90, true
 	}
-	return n
+	return n, true
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -157,6 +175,9 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 
 	select {
 	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

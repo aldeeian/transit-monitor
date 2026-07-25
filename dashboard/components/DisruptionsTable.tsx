@@ -63,7 +63,11 @@ export default function DisruptionsTable() {
     });
 
   if (error && !disruptions) {
-    return <p className="empty">api unreachable — is the ingest service running?</p>;
+    return (
+      <p className="empty">
+        could not load disruptions — is the ingest service running? ({error})
+      </p>
+    );
   }
   if (!disruptions) return <p className="empty">loading…</p>;
 

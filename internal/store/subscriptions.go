@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -161,5 +162,11 @@ func (s *Store) ClaimAndSend(ctx context.Context, subscriptionID, eventID int64,
 	if err := send(); err != nil {
 		return false, err // rollback claim; retried next pass
 	}
-	return true, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		// The email is already out but the claim is lost, so the retry will
+		// resend it: report it as sent-with-error rather than silently
+		// looking like a plain failure.
+		return true, fmt.Errorf("commit claim after send (recipient may get a duplicate on retry): %w", err)
+	}
+	return true, nil
 }

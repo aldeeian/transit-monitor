@@ -32,7 +32,11 @@ export default function RouteView({ route }: { route: string }) {
   const history = data?.history ?? null;
 
   if (error && !active) {
-    return <p className="empty">api unreachable — is the ingest service running?</p>;
+    return (
+      <p className="empty">
+        could not load route {route} — is the ingest service running? ({error})
+      </p>
+    );
   }
   if (!active || !history) return <p className="empty">loading…</p>;
 

@@ -50,12 +50,33 @@ export type HistoryResponse = {
 };
 
 export async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  } catch {
+    throw new Error(`${path}: api unreachable`);
+  }
+  const text = await res.text();
   if (!res.ok && res.status !== 503) {
     // 503 from /api/health still carries a JSON body we want to render.
-    throw new Error(`${path}: HTTP ${res.status}`);
+    throw new Error(`${path}: HTTP ${res.status}${errorDetail(text)}`);
   }
-  return res.json();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${path}: response was not JSON (HTTP ${res.status})`);
+  }
+}
+
+/** Pulls the API's {"error": "..."} message out of a body, if there is one. */
+function errorDetail(body: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.error === "string") return ` — ${parsed.error}`;
+  } catch {
+    // non-JSON error bodies (proxy pages, timeouts) carry no useful detail
+  }
+  return "";
 }
 
 /** Maps a backend effect string to a severity bucket for status colors. */

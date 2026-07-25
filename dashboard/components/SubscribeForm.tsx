@@ -17,8 +17,9 @@ export default function SubscribeForm() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setResult({ kind: "busy" });
+    let res: Response;
     try {
-      const res = await fetch(`${API_BASE}/api/subscribe`, {
+      res = await fetch(`${API_BASE}/api/subscribe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -26,14 +27,26 @@ export default function SubscribeForm() {
           routes: routes.split(",").map((r) => r.trim()).filter(Boolean),
         }),
       });
-      const body = await res.json();
-      if (!res.ok) {
-        setResult({ kind: "err", detail: body.error ?? `HTTP ${res.status}` });
-      } else {
-        setResult({ kind: "ok", detail: body.detail });
-      }
     } catch {
       setResult({ kind: "err", detail: "api unreachable" });
+      return;
+    }
+    // A gateway or proxy can answer with HTML, so a parse failure means the
+    // request reached something — don't report it as "api unreachable".
+    let body: { error?: string; detail?: string };
+    try {
+      body = await res.json();
+    } catch {
+      setResult({
+        kind: "err",
+        detail: `unexpected response from the API (HTTP ${res.status})`,
+      });
+      return;
+    }
+    if (!res.ok) {
+      setResult({ kind: "err", detail: body.error ?? `HTTP ${res.status}` });
+    } else {
+      setResult({ kind: "ok", detail: body.detail ?? "confirmation sent" });
     }
   };
 

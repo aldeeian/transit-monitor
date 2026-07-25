@@ -73,15 +73,12 @@ func main() {
 	}
 
 	health := &api.Health{}
+	apiErrCh := make(chan error, 1)
 	if *listen != "" && st != nil && !*once {
 		// Health goes stale after 3 missed polls.
 		srv := api.NewServer(st, health, 3**interval)
 		srv.EnableSubscriptions(sender, *publicURL)
-		go func() {
-			if err := srv.Run(ctx, *listen); err != nil {
-				log.Printf("ERROR api server: %v", err)
-			}
-		}()
+		go func() { apiErrCh <- srv.Run(ctx, *listen) }()
 	}
 
 	poll := func() {
@@ -137,8 +134,12 @@ func main() {
 		// Notify on the poll cadence: anything just written (or left over
 		// from a previous failed pass) goes out now.
 		if notifier != nil {
-			if n := notifier.Run(fctx); n > 0 {
+			n, err := notifier.Run(fctx)
+			if n > 0 {
 				log.Printf("notify: sent %d email(s)", n)
+			}
+			if err != nil {
+				log.Printf("ERROR notify (will retry next tick): %v", err)
 			}
 		}
 	}
@@ -155,6 +156,16 @@ func main() {
 		select {
 		case <-ctx.Done():
 			log.Printf("shutting down")
+			return
+		case err := <-apiErrCh:
+			// A dead API (port taken, listener closed) must not leave the
+			// process running and looking healthy to the platform.
+			if err != nil {
+				log.Printf("FATAL api server: %v", err)
+				st.Close()
+				os.Exit(1)
+			}
+			log.Printf("api server stopped")
 			return
 		case <-ticker.C:
 			poll()

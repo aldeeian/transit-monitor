@@ -5,16 +5,17 @@ import { useEffect, useState, type DependencyList } from "react";
 /**
  * Fetches once on mount and then re-fetches on a fixed interval, keeping the
  * last successful value on screen if a later poll fails (so a transient blip
- * doesn't blank the UI). `error` reflects whether the most recent attempt
- * failed. Shared by every auto-refreshing view.
+ * doesn't blank the UI). `error` holds the message of the most recent failed
+ * attempt (or null when the last attempt succeeded), so views can show why.
+ * Shared by every auto-refreshing view.
  */
 export function usePolledData<T>(
   loader: () => Promise<T>,
   intervalMs: number,
   deps: DependencyList = [],
-): { data: T | null; error: boolean } {
+): { data: T | null; error: string | null } {
   const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let stopped = false;
@@ -23,10 +24,10 @@ export function usePolledData<T>(
         const next = await loader();
         if (!stopped) {
           setData(next);
-          setError(false);
+          setError(null);
         }
-      } catch {
-        if (!stopped) setError(true);
+      } catch (e) {
+        if (!stopped) setError(e instanceof Error ? e.message : String(e));
       }
     };
     load();
