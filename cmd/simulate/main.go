@@ -22,12 +22,9 @@ func main() {
 	id := flag.String("id", fmt.Sprintf("SIM-%d", time.Now().Unix()), "alert ID")
 	effect := flag.String("effect", "significant delays", "effect text")
 	flag.Parse()
-	if *dsn == "" {
-		*dsn = "postgres://postgres:postgres@127.0.0.1:5433/transit?sslmode=disable"
-	}
 
 	ctx := context.Background()
-	s, err := store.Open(ctx, *dsn)
+	s, err := store.OpenOrLocal(ctx, *dsn)
 	if err != nil {
 		log.Fatal(err)
 	}

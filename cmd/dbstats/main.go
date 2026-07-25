@@ -14,11 +14,8 @@ import (
 func main() {
 	dsn := flag.String("db", os.Getenv("DATABASE_URL"), "Postgres DSN")
 	flag.Parse()
-	if *dsn == "" {
-		*dsn = "postgres://postgres:postgres@127.0.0.1:5433/transit?sslmode=disable"
-	}
 
-	s, err := store.Open(context.Background(), *dsn)
+	s, err := store.OpenOrLocal(context.Background(), *dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
