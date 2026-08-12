@@ -53,13 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_time  ON alert_events (occurred_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_active      ON alerts (last_seen_at) WHERE resolved_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_alerts_routes      ON alerts USING gin (routes);
 
--- Row-Level Security. The app connects as the table owner (postgres role) over a
--- direct Postgres connection, which bypasses RLS, so it keeps full access. Enabling
--- RLS with no policies denies all access to Supabase's auto-generated REST API
--- (the anon/authenticated PostgREST roles), closing off public read/write/delete to
--- these tables -- most importantly subscriptions, which holds emails and tokens.
--- ENABLE is idempotent (no-op if already enabled).
-ALTER TABLE alerts             ENABLE ROW LEVEL SECURITY;
-ALTER TABLE alert_events       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE subscriptions      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE notifications_sent ENABLE ROW LEVEL SECURITY;
+-- NOTE: Row-Level Security is enabled directly in Supabase (once, as the table
+-- owner) rather than here -- the role this app connects as over the pooler cannot
+-- ALTER these tables, and running the ALTER on every boot crashes startup. RLS is a
+-- persistent database setting, so it does not need to be re-asserted from app code.
