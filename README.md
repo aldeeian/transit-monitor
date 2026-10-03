@@ -1,17 +1,28 @@
 # transit-monitor
 
+[![CI](https://github.com/aldeeian/transit-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/aldeeian/transit-monitor/actions/workflows/ci.yml)
+
 Real-time delay & disruption monitor for Calgary Transit, built on the City of
 Calgary's public GTFS-Realtime feeds (refreshed every 30s, no API key).
 
 Instead of the noisy raw protobuf feed, it turns service alerts into
 plain-language disruptions you can read, filter by route, and subscribe to by
 email — plus a per-route history so you can see which lines are disrupted most.
+A single Go binary polls the feed, persists normalized events to Postgres,
+serves a read-only JSON API, and emails subscribers; a Next.js dashboard reads
+the API.
 
-**Live demo:** dashboard https://transit-monitor.vercel.app · API https://transit-monitor.onrender.com/api/health
+**Live demo:** [dashboard](https://transit-monitor.vercel.app) · [API health](https://transit-monitor.onrender.com/api/health)
+
+![Dashboard](docs/img/dashboard.png)
+
+> The live demo runs on free tiers (Render + Supabase). If the dashboard shows
+> `STALE`/`OFFLINE` or the API is slow on the first hit, the backend is waking
+> from idle — give it ~30–60s and refresh. See [Reliability](#reliability).
 
 ## Architecture
 
-A single Go binary runs three things off one 30-second poll loop: it fetches
+A single Go binary runs four jobs off one 30-second poll loop: it fetches
 and decodes the GTFS-RT service-alerts feed, persists normalized disruption
 events to Postgres, serves a read-only JSON API, and emails subscribers when a
 new disruption hits one of their routes. A Next.js dashboard reads the API.
@@ -80,6 +91,41 @@ Views: active disruptions (filter by text/route chips, sort, click a row for
 full detail), per-route page (current status + daily new-disruption bar chart +
 event log), and an always-visible health strip — LIVE / STALE / OFFLINE with
 last-poll age, so the site is honest about its own data freshness.
+
+## Design decisions
+
+- **Idempotent, restart-safe diffing.** New/updated/resolved events are computed
+  by diffing each poll against fingerprints loaded from Postgres, not in-memory
+  state, and the poller only advances its diff cursor after the write commits.
+  A crash or redeploy mid-poll re-reads the same DB state and produces no
+  duplicate or dropped events — verified by restarting a fresh process against a
+  seeded DB and asserting zero new rows.
+- **Health endpoint fails loud.** `GET /api/health` returns **503** (not 200)
+  once the last *successful* poll is older than 3 poll intervals, so a silently
+  dead ingester surfaces to uptime monitoring and to the dashboard's health
+  strip instead of serving stale data as if it were fresh.
+- **Abuse limits on subscribe.** The subscribe endpoint sends email, so it's
+  rate-limited **5 requests/hour per IP and 3/day per email address** (in-memory
+  sliding window, X-Forwarded-For aware behind the proxy), on top of double
+  opt-in — so it can't be used to spam arbitrary inboxes.
+- **NULL-safe ingestion.** The live feed sends route-less/stop-less alerts;
+  nil slices are coalesced to empty arrays so they don't violate `NOT NULL`.
+  This bug is pinned by a regression test (`store_test.go`,
+  `TestUpsertSubscriptionNilRoutes`).
+
+## Reliability
+
+The live demo is intentionally on free tiers, which has two consequences worth
+knowing:
+
+- **Render free web service sleeps after 15 idle minutes.** The first request
+  after idle cold-starts the container (~30–60s). An [UptimeRobot](https://uptimerobot.com)
+  monitor pinging `/api/health` every 5 minutes keeps it warm *and* doubles as
+  alerting, because the endpoint returns 503 when the poller goes stale.
+- **Supabase free projects pause after ~7 days of inactivity.** While paused the
+  app can't reach Postgres and the API is down until the project is restored
+  from the Supabase dashboard. A paid instance (either side) removes both
+  behaviors.
 
 ## Email alerts
 
