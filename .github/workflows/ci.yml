@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: vet · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: Unit tests (fast)
+        run: go test ./... -short
+
+      # Integration tests boot a throwaway embedded Postgres that downloads
+      # its own binaries at runtime — no system Postgres or other setup needed,
+      # so they run in CI too. Includes the nil-slice/NULL regression test.
+      - name: Integration tests (embedded Postgres)
+        run: go test ./... -count=1
+        timeout-minutes: 15
