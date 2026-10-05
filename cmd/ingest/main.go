@@ -1,3 +1,10 @@
+// Command ingest is the production entrypoint: a single process that polls the
+// Calgary Transit GTFS-Realtime feed on a fixed interval and, off that one
+// loop, persists normalized disruption events to Postgres, serves the read-only
+// JSON API, and emails subscribers when a new disruption hits their route.
+//
+// With no -db it runs in stdout-only mode (no persistence, no API) for quick
+// local inspection; -once polls a single time and exits.
 package main
 
 import (

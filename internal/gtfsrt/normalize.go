@@ -1,3 +1,7 @@
+// Package gtfsrt fetches the Calgary Transit GTFS-Realtime service-alerts
+// feed, decodes the Protocol Buffers payload, and normalizes each alert into a
+// clean app-level Event — stripping embedded HTML, synthesizing a headline,
+// and diffing successive polls into new / changed / resolved sets.
 package gtfsrt
 
 import (
@@ -13,8 +17,8 @@ import (
 	gtfs "github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
 )
 
-// Event is a normalized disruption event — the app-level shape that later
-// phases persist to Postgres and serve over the API.
+// Event is a normalized disruption event — the app-level shape that the rest
+// of the system persists to Postgres and serves over the API.
 type Event struct {
 	ID          string     `json:"id"`          // feed entity ID, stable across polls
 	Routes      []string   `json:"routes"`      // affected route IDs (sorted, deduped)
