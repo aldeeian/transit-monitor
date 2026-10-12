@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Architecture & developer notes
 
-Guidance for AI assistants (and humans) working in this repo.
+A map of the codebase and how to work in it — read this before making changes.
 
 ## What this is
 
@@ -74,7 +74,6 @@ real bug in the live feed (route-less alerts binding as SQL NULL).
   connection string allowed in source is the local dev default
   (`postgres:postgres@127.0.0.1:5433`). If a secret ever lands in a commit,
   rotate it immediately — scrubbing history is not enough once it's pushed.
-- **Ground rule for claims:** don't describe a feature the code doesn't have.
-  Docker, CI, the REST API, tests, rate limiting, and health checks are all
-  really implemented — keep README/docs matched to the code.
+- **Keep docs honest.** The README should only describe features the code
+  actually has — keep it matched to the code as things change.
 - Don't commit `.env`, `.devdb/`, `.outbox/`, or `node_modules/`.
